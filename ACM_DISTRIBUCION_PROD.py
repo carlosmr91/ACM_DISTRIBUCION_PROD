@@ -37,6 +37,16 @@ def process_data(df_loaded):
     # Convertir la columna de fecha a formato datetime
     df_loaded['FECHA'] = pd.to_datetime(df_loaded['FECHA'], format='%d/%m/%Y %H:%M')    
 
+    df_acumulada_tabla_max = df_loaded.groupby(["POZO", "POZO ID", "ZONA"])[['NP Mbbl','WP Mbbl','GP MMcf']].max().reset_index()
+    df_acumulada_tabla_sum = df_acumulada_tabla_max.groupby(["POZO", "ZONA"])[['NP Mbbl','WP Mbbl','GP MMcf']].sum().reset_index()
+    
+    df_meses_max = df_loaded.groupby(["POZO", "POZO ID", "ZONA"])[['MESES ACTIVO']].max().reset_index()
+    df_meses_sum = df_meses_max.groupby(["POZO", "ZONA"])[['MESES ACTIVO']].max().reset_index()
+    
+    merged_df = pd.merge(df_acumulada_tabla_sum, df_meses_sum, on=["POZO", "ZONA"], how="inner")
+    
+
+
     #DATAFRAME CON DATOS ACUMULADA TOTAL
     # Filtrar los valores máximos de los disparos por pozo
     df_acumulada_max = df_loaded.groupby(["POZO", "POZO ID", "ZONA","WGS84_UTMX_OBJETIVO", "WGS84_UTMY_OBJETIVO"])[['MESES ACTIVO','NP Mbbl','WP Mbbl','GP MMcf']].max().reset_index()
@@ -73,6 +83,7 @@ def process_data(df_loaded):
     df_data_corte = df_acumulada_corte
     df_diaria_actual = df_diaria_totalizada
     df_pozos = df_loaded[["POZO", "WGS84_UTMX_OBJETIVO", "WGS84_UTMY_OBJETIVO", "ZONA"]].drop_duplicates()
+    merged_data = merged_df
     
     # Definir el transformador para convertir de UTM a Lat/Long
     transformer = Transformer.from_crs(
@@ -125,7 +136,7 @@ def process_data(df_loaded):
     polygon_lats, polygon_lons = zip(*polygon_latlon)
     zoom = 1    
   
-    return df_pozos, df_data,df_data_corte,df_diaria_actual, polygon_lats, polygon_lons, zoom
+    return df_pozos, df_data,df_data_corte,df_diaria_actual, merged_data, polygon_lats, polygon_lons, zoom
 
 def plot_density_map(df,df_p, variable, polygon_lats, polygon_lons,color_continuous_scale,zoom):
     # Ajusta el factor de escala según el nivel de detalle que necesites
@@ -214,7 +225,7 @@ def main():
     df_loaded = load_data()
     
     with st.spinner("Procesando datos..."):
-        df_pozos, df_data,df_data_corte,df_diaria_actual, polygon_lats, polygon_lons, zoom = process_data(df_loaded)
+        df_pozos, df_data,df_data_corte,df_diaria_actual, merged_data, polygon_lats, polygon_lons, zoom = process_data(df_loaded)
         
         # Crea las pestañas de la interfaz
         tabs = st.tabs(["ACUMULADA TOTAL", "ACUMULADA NORMALIZADA", "PRODUCCIÓN ACTUAL"])
@@ -225,6 +236,8 @@ def main():
         df_data_seleccion = df_data[df_data["ZONA"].isin(ms_zona)]
         df_data_selection_norm = df_data_corte[df_data_corte["ZONA"].isin(ms_zona)]
         df_data_selection_diaria = df_diaria_actual[df_diaria_actual["ZONA"].isin(ms_zona)]
+        df_tablas_resumen = merged_data[merged_data["ZONA"].isin(ms_zona)]
+        
         
         # Pestaña "PRODUCCIÓN ACUMULADA"
         with tabs[0]:         
@@ -279,7 +292,7 @@ def main():
                 st.plotly_chart(figNp, use_container_width=True, key="figNp_key")
                 st.plotly_chart(fig_histogram_Np, use_container_width=True, key="fig_histogram_Np_key")
                 selected_columnsNP = ["POZO", "ZONA", 'MESES ACTIVO', 'NP Mbbl']
-                st.write(df_data_seleccion[selected_columnsNP])
+                st.write(df_tablas_resumen[selected_columnsNP])
                             
             with col2:
             # Mostrar el mapa (ya sea filtrado o no)
@@ -291,7 +304,7 @@ def main():
                 st.plotly_chart(figWp, use_container_width=True, key="figWp_key")
                 st.plotly_chart(fig_histogram_Wp, use_container_width=True, key="fig_histogram_Wp_key")
                 selected_columnsWP = ["POZO", "ZONA", 'MESES ACTIVO', 'WP Mbbl']
-                st.write(df_data_seleccion[selected_columnsWP])
+                st.write(df_tablas_resumen[selected_columnsWP])
                 
             with col3:
             # Mostrar el mapa (ya sea filtrado o no)
@@ -303,7 +316,7 @@ def main():
                 st.plotly_chart(figGp, use_container_width=True, key="figGp_key") 
                 st.plotly_chart(fig_histogram_Gp, use_container_width=True, key="fig_histogram_Gp_key")
                 selected_columnsGP = ["POZO", "ZONA", 'MESES ACTIVO', 'GP MMcf']
-                st.write(df_data_seleccion[selected_columnsGP])
+                st.write(df_tablas_resumen[selected_columnsGP])
                 
             # Pestaña "PRODUCCIÓN ACUMULADA NORMALIZADA"
             with tabs[1]:         
@@ -461,9 +474,12 @@ def main():
                         figQg_diario = plot_density_map(df_data_selection_diaria, df_pozos, "GAS DIARIO MMcfd", polygon_lats, polygon_lons, 'turbo', zoom)
                         st.plotly_chart(figQg_diario, use_container_width=True, key="figQg_diario_key") 
                         st.plotly_chart(fig_histogram_Qg, use_container_width=True, key="fig_histogram_Qg_key")
-                        selected_columnsQg = ["POZO", "ZONA", 'FECHA', 'GAS DIARIO MMcfd']
-                        st.write(df_data_selection_diaria[selected_columnsQg])            
-            
+                        selected_columnsQg = ["POZO", "ZONA", "FECHA", "GAS DIARIO MMcfd"]
+                        df_data_selection_diaria["RGA Mcfb"] = (df_data_selection_diaria["GAS DIARIO MMcfd"] * 1000) / df_data_selection_diaria["ACEITE DIARIO BPD"]
+                        selected_columnsQg.append("RGA Mcfb")
+                        st.write(df_data_selection_diaria[selected_columnsQg])
+                        
+                        
     
 if __name__ == "__main__":
     main()
